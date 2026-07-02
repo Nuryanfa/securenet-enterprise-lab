@@ -109,7 +109,7 @@ securenet-enterprise-lab/
 
 Built by M. Nur Yanfa, Informatics Engineering student, as a long-term hands-on portfolio project targeting Purple Team / Security Engineer roles. Originally started as a university final-exam network infrastructure project, now developed independently and continuously beyond the academic scope.
 
-- LinkedIn: 
+- LinkedIn: https://www.linkedin.com/in/muhamad-nur-yanfa-069036368/
 
 ---
 
