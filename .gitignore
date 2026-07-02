@@ -1,0 +1,47 @@
+# Secrets & credentials — never commit these
+*.env
+secrets.yml
+vault.yml
+*credentials*
+*password*
+*.pem
+*.key
+!*.pub.key
+
+# VM / disk images — too large for git, host these elsewhere (or use Git LFS)
+*.vdi
+*.vmdk
+*.ova
+*.ovf
+*.qcow2
+*.img
+
+# Raw packet captures — can contain sensitive data, keep samples only
+*.pcap
+*.pcapng
+!**/evidence/*-sample.pcap
+
+# Large log dumps — keep curated excerpts, not raw dumps
+*.log
+!**/evidence/*-excerpt.log
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# Terraform state (v6.0) — contains sensitive infra details
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Ansible
+*.retry
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
