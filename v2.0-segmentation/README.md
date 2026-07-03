@@ -7,6 +7,10 @@ Status: 🔜 Planned
 Extend the v1.0 foundation with proper enterprise-grade segmentation
 and secure connectivity: VLAN, DMZ, and VPN (remote access + site-to-site).
 
+## Architecture Blueprint
+
+Full architecture blueprint: [../docs/architecture/v2-v3-architecture-blueprint.md](../docs/architecture/v2-v3-architecture-blueprint.md)
+
 ## Planned Sub-Milestones
 
 - [ ] v2.1 — VLAN (trunking, inter-VLAN routing, access port policy)
