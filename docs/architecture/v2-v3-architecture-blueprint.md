@@ -9,6 +9,28 @@ because these two versions are tightly coupled — the Security VLAN
 introduced in v2.0 only makes sense in light of what gets deployed there
 in v3.0.
 
+> **Implementation note (updated after v2.1 execution):** two deliberate
+> deviations from the original design below were made during hands-on
+> implementation, documented here for traceability rather than silently
+> editing history:
+>
+> 1. **DMZ was renumbered from VLAN 99 to VLAN 30** — purely for
+>    operational convenience (easier to remember/type consistently
+>    across five interfaces during hands-on config), no functional
+>    difference in isolation policy.
+> 2. **The Finance VLAN (40) was deliberately deferred**, not dropped.
+>    With five interfaces already in play across the router and switch
+>    (Trunk, IT, Guest, DMZ, Security), adding a sixth to monitor during
+>    initial bring-up and troubleshooting was judged to add risk without
+>    proportional learning value at this stage. Finance will be added as
+>    a follow-up once the current four-VLAN topology is fully stable —
+>    the trunk/switch design already supports it without any
+>    re-architecture, only a new access port and VLAN sub-interface.
+>
+> See [`v2.0-segmentation/docs/phase2-problems-found.md`](../../v2.0-segmentation/docs/phase2-problems-found.md)
+> and [`v2.0-segmentation/docs/phase2-troubleshooting.md`](../../v2.0-segmentation/docs/phase2-troubleshooting.md)
+> for the full implementation and debugging record.
+
 ---
 
 ## 1. Design Principles
@@ -45,19 +67,19 @@ in v3.0.
 
 ## 2. Full IP / VLAN Addressing Scheme
 
-| Zone | VLAN ID | Subnet | DHCP | Notes |
-|---|---|---|---|---|
-| Management | — (out-of-band) | `192.168.100.0/24` | ❌ (static) | Unchanged from v1.0, never joins the trunk |
-| IT | 10 | `192.168.10.0/24` | ✅ | Unchanged subnet from v1.0, migrated onto trunk |
-| Guest | 20 | `192.168.20.0/24` | ✅ | Unchanged from v1.0, still Hotspot-gated |
-| Finance | 40 | `192.168.40.0/24` | ✅ | New department, demonstrates trunk scalability |
-| Security / SOC | 50 | `192.168.50.0/24` | ❌ (static) | Suricata, Wazuh manager, automation script host |
-| DMZ | 99 | `192.168.99.0/24` | ❌ (static) | Public-facing service(s) |
-| VPN Remote Access | — | `192.168.60.0/24` | ✅ (WireGuard-assigned) | Individual remote workers |
-| Branch Office (site-to-site) | — | `172.16.0.0/24` | ✅ | Separate CHR instance, own LAN |
+| Zone                         | VLAN ID         | Subnet             | DHCP                    | Notes                                           |
+| ---------------------------- | --------------- | ------------------ | ----------------------- | ----------------------------------------------- |
+| Management                   | — (out-of-band) | `192.168.100.0/24` | ❌ (static)             | Unchanged from v1.0, never joins the trunk      |
+| IT                           | 10              | `192.168.10.0/24`  | ✅                      | Unchanged subnet from v1.0, migrated onto trunk |
+| Guest                        | 20              | `192.168.20.0/24`  | ✅                      | Unchanged from v1.0, still Hotspot-gated        |
+| Finance                      | 40              | `192.168.40.0/24`  | ✅                      | New department, demonstrates trunk scalability  |
+| Security / SOC               | 50              | `192.168.50.0/24`  | ❌ (static)             | Suricata, Wazuh manager, automation script host |
+| DMZ                          | 30              | `192.168.30.0/24`  | ❌ (static)             | Public-facing service(s)                        |
+| VPN Remote Access            | —               | `192.168.60.0/24`  | ✅ (WireGuard-assigned) | Individual remote workers                       |
+| Branch Office (site-to-site) | —               | `172.16.0.0/24`    | ✅                      | Separate CHR instance, own LAN                  |
 
 IT and Guest subnets are intentionally kept identical to v1.0 — the
-migration changes *how* traffic reaches them (trunk instead of a
+migration changes _how_ traffic reaches them (trunk instead of a
 dedicated physical port), not the addressing itself.
 
 ---
@@ -75,7 +97,7 @@ systems require no VLAN awareness at all, exactly as in a real access
 switch deployment.
 
 Inter-VLAN routing happens exclusively on the HQ router via VLAN
-sub-interfaces (`vlan10`, `vlan20`, `vlan40`, `vlan50`, `vlan99`) on
+sub-interfaces (`vlan10`, `vlan20`, `vlan40`, `vlan50`, `vlan30`) on
 top of the single trunk port. The switch only forwards within a single
 VLAN (Layer 2); anything crossing VLANs must pass through the router,
 where firewall policy applies.
@@ -115,16 +137,16 @@ where firewall policy applies.
 
 ### 3.5 Firewall policy matrix (zone-to-zone)
 
-| From \ To | IT | Guest | Finance | DMZ | Security | Internet |
-|---|---|---|---|---|---|---|
-| **IT** | – | ❌ | ❌ | ✅ (admin ports only) | ❌ (data-plane) | ✅ |
-| **Guest** | ❌ | – | ❌ | ❌ | ❌ | ✅ (post-Hotspot login) |
-| **Finance** | ❌ | ❌ | – | ❌ | ❌ | ✅ (scoped) |
-| **DMZ** | ❌ | ❌ | ❌ | – | ❌ | ✅ (response only, no initiation) |
-| **Security (SOC)** | ❌ (data-plane) | ❌ | ❌ | ❌ | – | ✅ (updates, threat intel feeds) |
-| **VPN Remote** | ✅ (scoped) | ❌ | ❌ | ❌ | ❌ | — |
-| **Branch (site-to-site)** | ✅ (scoped, TBD resource) | ❌ | ❌ | ❌ | ❌ | ✅ |
-| **Management** | ✅ (admin) | ✅ (admin) | ✅ (admin) | ✅ (admin) | ✅ (admin) | ✅ |
+| From \ To                 | IT                        | Guest      | Finance    | DMZ                   | Security        | Internet                          |
+| ------------------------- | ------------------------- | ---------- | ---------- | --------------------- | --------------- | --------------------------------- |
+| **IT**                    | –                         | ❌         | ❌         | ✅ (admin ports only) | ❌ (data-plane) | ✅                                |
+| **Guest**                 | ❌                        | –          | ❌         | ❌                    | ❌              | ✅ (post-Hotspot login)           |
+| **Finance**               | ❌                        | ❌         | –          | ❌                    | ❌              | ✅ (scoped)                       |
+| **DMZ**                   | ❌                        | ❌         | ❌         | –                     | ❌              | ✅ (response only, no initiation) |
+| **Security (SOC)**        | ❌ (data-plane)           | ❌         | ❌         | ❌                    | –               | ✅ (updates, threat intel feeds)  |
+| **VPN Remote**            | ✅ (scoped)               | ❌         | ❌         | ❌                    | ❌              | —                                 |
+| **Branch (site-to-site)** | ✅ (scoped, TBD resource) | ❌         | ❌         | ❌                    | ❌              | ✅                                |
+| **Management**            | ✅ (admin)                | ✅ (admin) | ✅ (admin) | ✅ (admin)            | ✅ (admin)      | ✅                                |
 
 Note the one deliberate exception on the control plane: the automation
 script running in the Security VLAN needs to call the MikroTik API to
@@ -231,6 +253,7 @@ rather than only knowing how to configure existing features.
 ## 5. Implementation Sequencing
 
 **v2.0**
+
 1. v2.1 — Deploy access switch, configure trunk, migrate IT/Guest onto
    VLAN sub-interfaces (validate no regression vs v1.0 behavior)
 2. v2.2 — Add Finance VLAN (40) — proves trunk scalability
@@ -240,6 +263,7 @@ rather than only knowing how to configure existing features.
 6. v2.6 — VPN Site-to-Site (second CHR as Branch Office)
 
 **v3.0**
+
 1. v3.1 — Centralized syslog (MikroTik → log server in Security VLAN)
 2. v3.2 — Wazuh manager + agent deployment
 3. v3.3 — Suricata deployment (trunk + DMZ mirror), eve.json → Wazuh
