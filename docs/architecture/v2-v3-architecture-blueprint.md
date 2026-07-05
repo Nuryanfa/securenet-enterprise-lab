@@ -67,19 +67,19 @@ in v3.0.
 
 ## 2. Full IP / VLAN Addressing Scheme
 
-| Zone                         | VLAN ID         | Subnet             | DHCP                    | Notes                                           |
-| ---------------------------- | --------------- | ------------------ | ----------------------- | ----------------------------------------------- |
-| Management                   | — (out-of-band) | `192.168.100.0/24` | ❌ (static)             | Unchanged from v1.0, never joins the trunk      |
-| IT                           | 10              | `192.168.10.0/24`  | ✅                      | Unchanged subnet from v1.0, migrated onto trunk |
-| Guest                        | 20              | `192.168.20.0/24`  | ✅                      | Unchanged from v1.0, still Hotspot-gated        |
-| Finance                      | 40              | `192.168.40.0/24`  | ✅                      | New department, demonstrates trunk scalability  |
-| Security / SOC               | 50              | `192.168.50.0/24`  | ❌ (static)             | Suricata, Wazuh manager, automation script host |
-| DMZ                          | 30              | `192.168.30.0/24`  | ❌ (static)             | Public-facing service(s)                        |
-| VPN Remote Access            | —               | `192.168.60.0/24`  | ✅ (WireGuard-assigned) | Individual remote workers                       |
-| Branch Office (site-to-site) | —               | `172.16.0.0/24`    | ✅                      | Separate CHR instance, own LAN                  |
+| Zone | VLAN ID | Subnet | DHCP | Notes |
+|---|---|---|---|---|
+| Management | — (out-of-band) | `192.168.100.0/24` | ❌ (static) | Unchanged from v1.0, never joins the trunk |
+| IT | 10 | `192.168.10.0/24` | ✅ | Unchanged subnet from v1.0, migrated onto trunk |
+| Guest | 20 | `192.168.20.0/24` | ✅ | Unchanged from v1.0, still Hotspot-gated |
+| Finance | 40 | `192.168.40.0/24` | ✅ | New department, demonstrates trunk scalability |
+| Security / SOC | 50 | `192.168.50.0/24` | ❌ (static) | Suricata, Wazuh manager, automation script host |
+| DMZ | 30 | `192.168.30.0/24` | ❌ (static) | Public-facing service(s) |
+| VPN Remote Access | — | `192.168.60.0/24` | ✅ (WireGuard-assigned) | Individual remote workers |
+| Branch Office (site-to-site) | — | `172.16.0.0/24` | ✅ | Separate CHR instance, own LAN |
 
 IT and Guest subnets are intentionally kept identical to v1.0 — the
-migration changes _how_ traffic reaches them (trunk instead of a
+migration changes *how* traffic reaches them (trunk instead of a
 dedicated physical port), not the addressing itself.
 
 ---
@@ -129,24 +129,52 @@ where firewall policy applies.
 
 - A second, independent MikroTik CHR instance represents a **Branch
   Office**, with its own LAN (`172.16.0.0/24`).
-- Connected back to HQ via a WireGuard site-to-site tunnel over the
-  simulated Internet.
-- Branch LAN access into HQ is scoped to specific resources only (to
-  be defined once a concrete use case is implemented — e.g. shared
-  file server in IT), not blanket access to the whole HQ network.
+- Connected back to HQ via a WireGuard site-to-site tunnel, tunnel
+  subnet `192.168.70.0/30`.
+- Branch LAN access into HQ is scoped to the IT VLAN only, matching the
+  same least-privilege principle applied to VPN Remote Access — not
+  blanket access to the whole HQ network.
+
+**Implementation note — resolved during v2.4:** VirtualBox's default NAT
+adapter mode isolates each VM's network stack, which prevented a direct
+WireGuard handshake between HQ and Branch when both routers relied on
+their default NAT-mode WAN adapters (the handshake packet could leave
+Branch but HQ's reply had no NAT translation state to route back — a
+classic NAT hairpin/asymmetric traversal failure, not a WireGuard
+configuration error).
+
+This was resolved by introducing a **dedicated point-to-point segment**
+(`ISP-Backbone`, `203.0.113.0/30`) — an additional Internal Network
+adapter on both routers, separate from their original NAT/internet
+adapters — simulating a real point-to-point WAN link between HQ and
+Branch and bypassing NAT entirely for this connection. The original
+WAN/VLAN adapters on both routers were left untouched, preserving the
+already-validated v2.1–v2.3 architecture.
+
+Branch LAN's own internet access (temporarily lost when its original
+NAT adapter was reused for troubleshooting) was restored via a
+**separate, dedicated NAT adapter**, kept fully independent from the
+`ISP-Backbone` link — Branch is dual-homed: one path for general
+internet egress, one path (the WireGuard tunnel over `ISP-Backbone`)
+for reaching HQ's internal VLANs. RouterOS's longest-prefix-match
+routing means both paths coexist without conflict.
+
+Full build-out and diagnostic record:
+[`v2.0-segmentation/docs/phase2.3-2.4-problems-found.md`](../../v2.0-segmentation/docs/phase2.3-2.4-problems-found.md) and
+[`v2.0-segmentation/docs/phase2.3-2.4-troubleshooting.md`](../../v2.0-segmentation/docs/phase2.3-2.4-troubleshooting.md)
 
 ### 3.5 Firewall policy matrix (zone-to-zone)
 
-| From \ To                 | IT                        | Guest      | Finance    | DMZ                   | Security        | Internet                          |
-| ------------------------- | ------------------------- | ---------- | ---------- | --------------------- | --------------- | --------------------------------- |
-| **IT**                    | –                         | ❌         | ❌         | ✅ (admin ports only) | ❌ (data-plane) | ✅                                |
-| **Guest**                 | ❌                        | –          | ❌         | ❌                    | ❌              | ✅ (post-Hotspot login)           |
-| **Finance**               | ❌                        | ❌         | –          | ❌                    | ❌              | ✅ (scoped)                       |
-| **DMZ**                   | ❌                        | ❌         | ❌         | –                     | ❌              | ✅ (response only, no initiation) |
-| **Security (SOC)**        | ❌ (data-plane)           | ❌         | ❌         | ❌                    | –               | ✅ (updates, threat intel feeds)  |
-| **VPN Remote**            | ✅ (scoped)               | ❌         | ❌         | ❌                    | ❌              | —                                 |
-| **Branch (site-to-site)** | ✅ (scoped, TBD resource) | ❌         | ❌         | ❌                    | ❌              | ✅                                |
-| **Management**            | ✅ (admin)                | ✅ (admin) | ✅ (admin) | ✅ (admin)            | ✅ (admin)      | ✅                                |
+| From \ To | IT | Guest | Finance | DMZ | Security | Internet |
+|---|---|---|---|---|---|---|
+| **IT** | – | ❌ | ❌ | ✅ (admin ports only) | ❌ (data-plane) | ✅ |
+| **Guest** | ❌ | – | ❌ | ❌ | ❌ | ✅ (post-Hotspot login) |
+| **Finance** | ❌ | ❌ | – | ❌ | ❌ | ✅ (scoped) |
+| **DMZ** | ❌ | ❌ | ❌ | – | ❌ | ✅ (response only, no initiation) |
+| **Security (SOC)** | ❌ (data-plane) | ❌ | ❌ | ❌ | – | ✅ (updates, threat intel feeds) |
+| **VPN Remote** | ✅ (scoped) | ❌ | ❌ | ❌ | ❌ | — |
+| **Branch (site-to-site)** | ✅ (scoped, TBD resource) | ❌ | ❌ | ❌ | ❌ | ✅ |
+| **Management** | ✅ (admin) | ✅ (admin) | ✅ (admin) | ✅ (admin) | ✅ (admin) | ✅ |
 
 Note the one deliberate exception on the control plane: the automation
 script running in the Security VLAN needs to call the MikroTik API to
@@ -252,18 +280,13 @@ rather than only knowing how to configure existing features.
 
 ## 5. Implementation Sequencing
 
-**v2.0**
-
-1. v2.1 — Deploy access switch, configure trunk, migrate IT/Guest onto
-   VLAN sub-interfaces (validate no regression vs v1.0 behavior)
-2. v2.2 — Add Finance VLAN (40) — proves trunk scalability
-3. v2.3 — Add DMZ VLAN (99) with containment firewall rules
-4. v2.4 — Add Security VLAN (50), empty for now (populated in v3.0)
-5. v2.5 — VPN Remote Access (WireGuard)
-6. v2.6 — VPN Site-to-Site (second CHR as Branch Office)
+**v2.0 — Status: ✅ Complete**
+1. v2.1 — VLAN segmentation (trunk, switch, IT/Guest/DMZ/Security VLANs) — ✅ Complete
+2. v2.2 — DMZ containment (firewall isolation, port forwarding, reverse proxy) — ✅ Complete
+3. v2.3 — VPN Remote Access (WireGuard) — ✅ Complete
+4. v2.4 — VPN Site-to-Site (Branch Office, dedicated WAN-link segment) — ✅ Complete
 
 **v3.0**
-
 1. v3.1 — Centralized syslog (MikroTik → log server in Security VLAN)
 2. v3.2 — Wazuh manager + agent deployment
 3. v3.3 — Suricata deployment (trunk + DMZ mirror), eve.json → Wazuh

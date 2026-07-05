@@ -1,6 +1,6 @@
 # v2.0 — Network Segmentation & Enterprise Services
 
-Status: 🟡 In Progress (v2.1 — VLAN implemented, v2.2-v2.4 pending)
+Status: ✅ Complete
 
 ## Goal
 
@@ -11,46 +11,62 @@ and secure connectivity: VLAN, DMZ, and VPN (remote access + site-to-site).
 
 Full architecture blueprint: [../docs/architecture/v2-v3-architecture-blueprint.md](../docs/architecture/v2-v3-architecture-blueprint.md)
 
-> Two deviations from the original blueprint were made during hands-on
+> Deviations from the original blueprint made during hands-on
 > implementation (DMZ renumbered from VLAN 99 to VLAN 30, Finance VLAN
-> deferred) — see the note at the top of the blueprint and the
-> implementation log below for details.
+> deferred, Branch Office WAN-link redesigned around a dedicated
+> point-to-point segment) are documented inline in the blueprint and in
+> the implementation logs below.
 
-## Planned Sub-Milestones
+## Sub-Milestones
 
-- [x] v2.1 — VLAN (trunking, inter-VLAN routing, access port policy) — **implemented**
-- [ ] v2.2 — DMZ (isolated public-facing service segment) — VLAN created, service deployment pending
-- [ ] v2.3 — VPN Remote Access (WireGuard)
-- [ ] v2.4 — VPN Site-to-Site (simulated branch office)
+- [x] v2.1 — VLAN (trunking, inter-VLAN routing, access port policy)
+- [x] v2.2 — DMZ (isolated public-facing service segment, reverse proxy)
+- [x] v2.3 — VPN Remote Access (WireGuard)
+- [x] v2.4 — VPN Site-to-Site (Branch Office)
 
 See [../ROADMAP.md](../ROADMAP.md) for full details.
 
-## v2.1 Implementation Log
+## Implementation Log
 
-Getting a working 802.1Q trunk between a router and a switch running
-entirely inside Oracle VirtualBox surfaced a chain of issues spanning
-build-out mistakes, Layer 2/3 misconfiguration, and — ultimately — a
-hypervisor-level setting that silently broke connectivity despite every
-RouterOS configuration being correct. The full diagnostic process is
-documented in two companion documents rather than folded into a single
-"it works now" summary, since the debugging process itself is a
-meaningful part of what this project demonstrates:
+Each stage surfaced real, non-trivial issues — spanning hypervisor
+networking quirks, firewall chain ordering, and VPN NAT traversal — that
+required systematic, layer-by-layer diagnosis rather than guesswork.
+Full records are kept as separate problems-found / troubleshooting
+document pairs, following the same format established in v1.0:
 
-- [`docs/phase2-problems-found.md`](./docs/phase2-problems-found.md) —
-  every issue encountered, documented as found, without resolutions
-- [`docs/phase2-troubleshooting.md`](./docs/phase2-troubleshooting.md) —
-  the systematic layer-by-layer diagnostic process, root causes, and
-  fixes applied for each issue
+- [`docs/phase2-problems-found.md`](./docs/phase2-problems-found.md) /
+  [`docs/phase2-troubleshooting.md`](./docs/phase2-troubleshooting.md) —
+  VLAN trunk build-out and the VirtualBox Promiscuous Mode root cause
+- [`docs/phase2.3-2.4-problems-found.md`](./docs/phase2.3-2.4-problems-found.md) /
+  [`docs/phase2.3-2.4-troubleshooting.md`](./docs/phase2.3-2.4-troubleshooting.md) —
+  Branch Office build-out and the WireGuard Site-to-Site NAT hairpin
+  resolution
 
-**Root cause worth highlighting:** the network-wide connectivity failure
-(VLAN tagging, bridge, PVID, routing, firewall, and NAT all verified
-correct, yet nothing could reach even its own gateway) turned out to be
-caused by VirtualBox's Internal Network adapters defaulting **Promiscuous
-Mode to "Deny"** — silently dropping frames at the hypervisor level
-before RouterOS ever processed them. This is the kind of failure that
-software-level configuration review alone cannot catch, and is a useful
-reminder that virtualized lab environments introduce failure modes that
-don't exist on physical hardware.
+### Highlights worth calling out
+
+**v2.1 — Promiscuous Mode.** VLAN tagging, bridge configuration, PVID,
+routing, and firewall were all independently verified correct, yet
+connectivity failed completely. Root cause: VirtualBox's Internal
+Network adapters default Promiscuous Mode to "Deny," silently dropping
+trunk frames at the hypervisor layer before RouterOS ever processed
+them — a failure mode entirely outside RouterOS configuration.
+
+**v2.2 — Stateful firewall rules.** DMZ containment rules initially
+blocked legitimate return traffic for connections IT had itself
+initiated into the DMZ (e.g. SSH), because address-based drop rules
+don't distinguish new connection attempts from established return
+traffic. Fixed by adding an explicit `established,related` accept rule
+ahead of the containment drop rules — the isolation policy itself
+required no weakening.
+
+**v2.4 — WireGuard NAT hairpin.** Site-to-Site handshake failed
+(`tx` climbing, `rx` stuck at 0) due to VirtualBox's per-VM NAT
+isolation preventing symmetric UDP traversal between two routers each
+behind their own NAT. Resolved by adding a dedicated point-to-point
+Internal Network segment (`ISP-Backbone`, `203.0.113.0/30`) as a direct
+Layer 3 link between HQ and Branch — simulating a real WAN link instead
+of relying on NAT traversal — without altering the already-validated
+v2.1–v2.3 architecture.
 
 ### Current VLAN scheme (as implemented)
 
@@ -61,11 +77,19 @@ don't exist on physical hardware.
 | 30 | DMZ | `192.168.30.0/24` | `192.168.30.1` |
 | 50 | Security | `192.168.50.0/24` | `192.168.50.1` |
 
-Finance (VLAN 40) is deferred, not dropped — the trunk/switch design
-already supports adding it later with just a new access port and VLAN
-sub-interface, no re-architecture required.
+### VPN scheme (as implemented)
 
-## Contents (once complete)
+| Link | Subnet | Notes |
+|---|---|---|
+| Remote Access (WireGuard) | `192.168.60.0/24` | Scoped to IT VLAN only |
+| Site-to-Site tunnel | `192.168.70.0/30` | HQ ↔ Branch point-to-point |
+| Site-to-Site WAN-link | `203.0.113.0/30` | Dedicated segment bypassing NAT hairpin |
+| Branch LAN | `172.16.0.0/24` | Dual-homed: tunnel to HQ IT + independent NAT for internet |
+
+Finance (VLAN 40) remains deferred — the trunk/switch design already
+supports adding it with just a new access port and VLAN sub-interface.
+
+## Contents
 
 - `configs/` — Sanitized configuration exports
 - `diagrams/` — Updated network architecture diagrams
